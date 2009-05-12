@@ -1,2 +1,7 @@
-# Please don't check in password in the following file.
+# Avoid checking in passwords.
 global_settings.rb
+
+# Avoid the export files, logs of the import and working dir for splitting files.
+*.log
+*export*.txt
+splitted_files
