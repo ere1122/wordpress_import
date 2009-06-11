@@ -4,12 +4,46 @@ require 'uri'
 require 'pathname'
 require 'date'
 require 'nokogiri'
-
 require 'activerecord'
 require 'logger'
+require 'optparse'
 
 $logger = Logger.new(STDOUT)
 $logger.level = Logger::INFO
+
+$options = {:apply => false}
+OptionParser.new do |opts|
+  opts.banner =   "Usage: import_missing_comments.rb [--apply|-a] wp-config.php missing_comments.yml"
+  
+  opts.on('-a', '--apply', "Apply chnages to the database") do |a|
+    $options[:apply] = a
+  end
+  
+  opts.on_tail("-h", "--help", "Show this message") do
+    puts opts
+    exit
+  end
+end.parse!
+
+if ARGV.size < 2
+  puts "Usage: import_missing_comments.rb [--apply|-a] wp-config.php missing_comments.yml"
+  exit 2
+end
+
+class WpPost < ActiveRecord::Base
+  set_primary_key 'ID'
+  set_table_name "posts"
+  has_many :comments, :class_name => 'WpComment', :foreign_key => 'comment_post_ID'
+end
+class WpComment < ActiveRecord::Base
+  set_primary_key 'comment_ID'
+  set_table_name "comments" 
+end
+
+def comment_excerpt(comment)
+  excerpt = comment['body'][0,50].gsub("\n", '')
+  "comment by '#{comment['author']}': #{excerpt}"
+end
 
 def comment_exists?(post, comment)
   # Check if this comment already exists using brutal compare on content
@@ -18,7 +52,7 @@ def comment_exists?(post, comment)
   post.comments.each do |wp_comment|
     wp_key = Nokogiri::HTML(wp_comment.comment_content).content.gsub(/[^a-zA-Z0-9]*/, '') + wp_comment.comment_author
     if key == wp_key
-      $logger.warn " Skipping existing comment by '#{comment['author']}': #{comment['body'][0,40]}"
+      $logger.warn " Skipping existing #{comment_excerpt(comment)}"
       return true
     end
   end
@@ -30,35 +64,32 @@ $import_count = 0;
 def process_comments_on_post(post, comments)
   comments.each do |comment|
     next if comment_exists?(post, comment)
-    
-    # Import the new comment
+
+    # Parse the date assuming (US) EST 
     comment_date= DateTime.strptime(comment['dateCreated'] + ' -5000', '%m/%d/%Y %I:%M:%S %p %z')
     
-    post.comments.create do |c|
-      c.comment_author  = comment['author']
-      c.comment_author_email = comment['authorEmail']
-      c.comment_author_url = comment['authorUrl']
-      c.comment_author_IP = '127.0.0.1'
-      c.comment_date = comment_date
-      c.comment_date_gmt = comment_date.new_offset(0)
-      c.comment_content = comment['body']
-      c.comment_karma = 0
-      c.comment_approved = 1
-      c.comment_agent = 'Missing Comment Importer'
-      c.comment_type = ''
-      c.comment_parent = 0
-      c.user_id = 0
+    if $options[:apply]
+      # Import the new comment
+      post.comments.create! do |c|
+        c.comment_author  = comment['author']
+        c.comment_author_email = comment['authorEmail']
+        c.comment_author_url = comment['authorUrl']
+        c.comment_author_IP = '127.0.0.1'
+        c.comment_date = comment_date
+        c.comment_date_gmt = comment_date.new_offset(0)
+        c.comment_content = comment['body']
+        c.comment_karma = 0
+        c.comment_approved = 1
+        c.comment_agent = 'Missing Comment Importer'
+        c.comment_type = ''
+        c.comment_parent = 0
+        c.user_id = 0
+      end
     end
     $import_count += 1
-    $logger.info " Imported comment by '#{comment['author']}': #{comment['body'][0,40]}"
+    $logger.info " Imported #{comment_excerpt(comment)}"
   end
 end
-
-if ARGV.size < 2
-  puts "Usage: import_missing_comments.rb wp-config.php missing_comments.yml"
-  exit 2
-end
-
 
 # Get the DB config
 wp_config = File.open(ARGV[0]).readlines.grep(/define\(/)
@@ -70,15 +101,7 @@ wp_config.each do |line|
 end
 
 # p config
-class WpPost < ActiveRecord::Base
-  set_primary_key 'ID'
-  set_table_name "posts"
-  has_many :comments, :class_name => 'WpComment', :foreign_key => 'comment_post_ID'
-end
-class WpComment < ActiveRecord::Base
-  set_primary_key 'comment_ID'
-  set_table_name "comments" 
-end
+$logger.info "--apply option not provided, not applying changes to database" unless $options[:apply]
 
 $logger.debug "Loading missing comments"
 missing_comments = []
