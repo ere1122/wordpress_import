@@ -72,8 +72,10 @@ def process_post(link)
   # Determine the post date/time
   date = page.root.css('h2.date-header').text
   time = ''
-  if page.root.css('div.entry-footer span.post-footers').text =~ /Posted by .* at (\d{2}:\d{2} (AM|PM))/
-    time = $1
+  author = ''
+  if page.root.css('div.entry-footer span.post-footers').text =~ /Posted by (.+) at (\d{2}:\d{2} (AM|PM))/
+    author = $1
+    time = $2
   else
     puts " Unable to determine time of post"
     return
@@ -85,6 +87,7 @@ def process_post(link)
     'permalink' => link.href.sub(/#comments$/, ''),
     'title' => page.root.css('h3.entry-header').text.strip,
     # dateCreated: '11/22/2006 04:02:34 PM'
+    'author' => author,
     'dateCreated' => post_date.strftime('%m/%d/%Y %I:%M:%S %p'),
     'comments' => []
   }
