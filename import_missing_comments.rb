@@ -11,12 +11,16 @@ require 'optparse'
 $logger = Logger.new(STDOUT)
 $logger.level = Logger::INFO
 
-$options = {:apply => false}
+$options = {:apply => false, :update => false}
 OptionParser.new do |opts|
-  opts.banner =   "Usage: import_missing_comments.rb [--apply|-a] wp-config.php missing_comments.yml"
+  opts.banner =   "Usage: import_missing_comments.rb [OPTIONS] wp-config.php [missing_comments.yml]"
   
   opts.on('-a', '--apply', "Apply chnages to the database") do |a|
     $options[:apply] = a
+  end
+  
+  opts.on('-u', '--update-counts', "Update comment counts") do |u|
+    $options[:update] = u
   end
   
   opts.on_tail("-h", "--help", "Show this message") do
@@ -25,8 +29,9 @@ OptionParser.new do |opts|
   end
 end.parse!
 
-if ARGV.size < 2
-  puts "Usage: import_missing_comments.rb [--apply|-a] wp-config.php missing_comments.yml"
+if ARGV.size < 1
+  puts "wp-config argument is required"
+  puts "Usage: import_missing_comments.rb [OPTIONS] wp-config.php [missing_comments.yml]"
   exit 2
 end
 
@@ -103,13 +108,6 @@ end
 # p config
 $logger.info "--apply option not provided, not applying changes to database" unless $options[:apply]
 
-$logger.debug "Loading missing comments"
-missing_comments = []
-File.open(ARGV[1]) do |comments_file|
-  missing_comments = YAML.load(comments_file)
-end
-$logger.debug "Done"
-
 ActiveRecord::Base.logger = $logger
 
 ActiveRecord::Base.establish_connection(
@@ -120,6 +118,39 @@ ActiveRecord::Base.establish_connection(
   # :socket => ''
   :host => config[:db_host]
 )
+
+
+# // populate comment_count field of posts table
+# $comments = $wpdb->get_results( "SELECT comment_post_ID, COUNT(*) as c FROM $wpdb->comments WHERE comment_approved = '1' GROUP BY comment_post_ID" );
+# if( is_array( $comments ) ) {
+#   foreach ($comments as $comment) {
+#     $wpdb->query( $wpdb->prepare("UPDATE $wpdb->posts SET comment_count = %d WHERE ID = %d", $comment->c, $comment->comment_post_ID) );
+#   }
+# }
+
+if $options[:update]
+  WpComment.find(:all, :select => 'comment_post_ID, count(*) AS comment_count', :conditions => ['comment_approved = ?', '1'], :group => :comment_post_ID).each do |stat|
+    post = WpPost.find(stat.comment_post_ID)
+    if post.comment_count.to_i != stat.comment_count.to_i
+      puts "#{post.post_title} #{post.comment_count} => #{stat.comment_count}"
+      post.comment_count = stat.comment_count
+      post.save! if $options[:apply]
+    end
+  end
+  
+end
+
+# Missing comments not passed to process
+if ARGV.size < 2
+  exit
+end
+
+$logger.debug "Loading missing comments"
+missing_comments = []
+File.open(ARGV[1]) do |comments_file|
+  missing_comments = YAML.load(comments_file)
+end
+$logger.debug "Done"
 
 missing_comments.each do |post|
   old_permalink = URI.parse(post['permalink'])
